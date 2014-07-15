@@ -21,8 +21,10 @@
 
 using System;
 using System.Linq;
+using System.Collections.Generic;
 
 using Microsoft.Phone.Shell;
+using Microsoft.Phone.Scheduler;
 
 using WPCordovaClassLib.Cordova;
 using WPCordovaClassLib.Cordova.Commands;
@@ -51,67 +53,84 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Sets application live tile
         /// </summary>
-        public void add (string jsonArgs)
+        public void add(string jsonArgs)
         {
-            string[] args   = JsonHelper.Deserialize<string[]>(jsonArgs);
+            string[] args = JsonHelper.Deserialize<string[]>(jsonArgs);
             Options options = JsonHelper.Deserialize<Options>(args[0]);
-            // Application Tile is always the first Tile, even if it is not pinned to Start.
-            ShellTile AppTile = ShellTile.ActiveTiles.First();
 
-            if (AppTile != null)
+            // Create Alarm
+            Reminder alarm = new Reminder(options.ID);
+            alarm.Content = options.Message;
+            // Sound is not implemented yet
+            //alarm.Sound = new Uri("/Ringtones/Ring01.wma", UriKind.Relative);
+            // Convert Timestamp to DateTime
+            DateTime dt_1970  = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
+            long time = long.Parse(options.Date.ToString());
+
+            long tricks_1970 = dt_1970 .Ticks;
+            long time_tricks = tricks_1970 + time * 10000 * 1000;
+            DateTime date = new DateTime(time_tricks);
+
+            TimeSpan offset = TimeZoneInfo.Local.GetUtcOffset(DateTime.Now);
+
+            date = date.Add(offset);
+
+           // DateTime date = DateTime.ParseExact(options.D)
+            alarm.BeginTime = date;
+            alarm.ExpirationTime = date.AddHours(12);
+            alarm.RecurrenceType = RecurrenceInterval.None;
+            alarm.Title = options.Title;
+
+            // Add alarm, if not in the past
+            if (alarm.BeginTime > DateTime.Now)
             {
-                // Set the properties to update for the Application Tile
-                // Empty strings for the text values and URIs will result in the property being cleared.
-                FlipTileData TileData = CreateTileData(options);
+                // Remove old
+                ScheduledAction oldAlarm = ScheduledActionService.Find(options.ID);
+                if (oldAlarm != null)
+                {
+                    ScheduledActionService.Remove(options.ID);
+                }
 
-                AppTile.Update(TileData);
-
-                FireEvent("trigger", options.ID, options.JSON);
-                FireEvent("add", options.ID, options.JSON);
+                // ScheduledActionService is limit to 50 notifications 
+                List<ScheduledNotification> notifications = ScheduledActionService.GetActions<ScheduledNotification>().ToList();
+                if (notifications.Count < 50)
+                {
+                    ScheduledActionService.Add(alarm);
+                }
             }
 
+            //FireEvent("trigger", options.ID, options.JSON);
+            FireEvent("add", options.ID, options.JSON);
+
             DispatchCommandResult();
         }
 
         /// <summary>
         /// Clears the application live tile
         /// </summary>
-        public void cancel (string jsonArgs)
+        public void cancel(string jsonArgs)
         {
-            string[] args         = JsonHelper.Deserialize<string[]>(jsonArgs);
+            string[] args = JsonHelper.Deserialize<string[]>(jsonArgs);
             string notificationID = args[0];
 
-            cancelAll(jsonArgs);
+            ScheduledAction alert = ScheduledActionService.Find(notificationID);
+            if (alert != null)
+            {
+                ScheduledActionService.Remove(notificationID);
+            }
 
             FireEvent("cancel", notificationID, "");
-            DispatchCommandResult();
         }
 
         /// <summary>
         /// Clears the application live tile
         /// </summary>
-        public void cancelAll (string jsonArgs)
+        public void cancelAll(string jsonArgs)
         {
-            // Application Tile is always the first Tile, even if it is not pinned to Start.
-            ShellTile AppTile = ShellTile.ActiveTiles.First();
-
-            if (AppTile != null)
+            List<ScheduledNotification> reminders = ScheduledActionService.GetActions<ScheduledNotification>().ToList();
+            foreach (ScheduledNotification reminder in reminders)
             {
-                // Set the properties to update for the Application Tile
-                // Empty strings for the text values and URIs will result in the property being cleared.
-                FlipTileData TileData = new FlipTileData
-                {
-                    Count                = 0,
-                    BackTitle            = "",
-                    BackContent          = "",
-                    WideBackContent      = "",
-                    SmallBackgroundImage = new Uri("appdata:Background.png"),
-                    BackgroundImage      = new Uri("appdata:Background.png"),
-                    WideBackgroundImage  = new Uri("/Assets/Tiles/FlipCycleTileLarge.png", UriKind.Relative),
-                };
-
-                // Update the Application Tile
-                AppTile.Update(TileData);
+                ScheduledActionService.Remove(reminder.Name);
             }
 
             DispatchCommandResult();
@@ -120,7 +139,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Checks wether a notification with an ID is scheduled
         /// </summary>
-        public void isScheduled (string jsonArgs)
+        public void isScheduled(string jsonArgs)
         {
             DispatchCommandResult();
         }
@@ -128,7 +147,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Retrieves a list with all currently pending notifications
         /// </summary>
-        public void getScheduledIds (string jsonArgs)
+        public void getScheduledIds(string jsonArgs)
         {
             DispatchCommandResult();
         }
@@ -136,7 +155,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Checks wether a notification with an ID was triggered
         /// </summary>
-        public void isTriggered (string jsonArgs)
+        public void isTriggered(string jsonArgs)
         {
             DispatchCommandResult();
         }
@@ -144,7 +163,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Retrieves a list with all currently triggered notifications
         /// </summary>
-        public void getTriggeredIds (string jsonArgs)
+        public void getTriggeredIds(string jsonArgs)
         {
             DispatchCommandResult();
         }
@@ -152,7 +171,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Informs that the device is ready and the deviceready event has been fired
         /// </summary>
-        public void deviceready (string jsonArgs)
+        public void deviceready(string jsonArgs)
         {
             DeviceReady = true;
         }
@@ -160,7 +179,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Creates tile data
         /// </summary>
-        private FlipTileData CreateTileData (Options options)
+        private FlipTileData CreateTileData(Options options)
         {
             FlipTileData tile = new FlipTileData();
 
@@ -170,8 +189,8 @@ namespace Cordova.Extension.Commands
                 tile.Count = options.Badge;
             }
 
-            tile.BackTitle       = options.Title;
-            tile.BackContent     = options.ShortMessage;
+            tile.BackTitle = options.Title;
+            tile.BackContent = options.ShortMessage;
             tile.WideBackContent = options.Message;
 
             if (!String.IsNullOrEmpty(options.SmallImage))
@@ -195,11 +214,11 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Fires the given event.
         /// </summary>
-        private void FireEvent (string Event, string Id, string JSON = "")
+        private void FireEvent(string Event, string Id, string JSON = "")
         {
             string state = ApplicationState();
-            string args  = String.Format("\'{0}\',\'{1}\',\'{2}\'", Id, state, JSON);
-            string js    = String.Format("window.plugin.notification.local.on{0}({1})", Event, args);
+            string args = String.Format("\'{0}\',\'{1}\',\'{2}\'", Id, state, JSON);
+            string js = String.Format("window.plugin.notification.local.on{0}({1})", Event, args);
 
             PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, js);
 
@@ -212,7 +231,7 @@ namespace Cordova.Extension.Commands
         /// Retrieves the application state
         /// Either "background" or "foreground"
         /// </summary>
-        private String ApplicationState ()
+        private String ApplicationState()
         {
             return RunsInBackground ? "background" : "foreground";
         }
@@ -220,7 +239,7 @@ namespace Cordova.Extension.Commands
         /// <summary>
         /// Occurs when the application is being deactivated.
         /// </summary>
-        public override void OnPause (object sender, DeactivatedEventArgs e)
+        public override void OnPause(object sender, DeactivatedEventArgs e)
         {
             RunsInBackground = true;
         }
@@ -229,7 +248,7 @@ namespace Cordova.Extension.Commands
         /// Occurs when the application is being made active after previously being put
         /// into a dormant state or tombstoned.
         /// </summary>
-        public override void OnResume (object sender, Microsoft.Phone.Shell.ActivatedEventArgs e)
+        public override void OnResume(object sender, Microsoft.Phone.Shell.ActivatedEventArgs e)
         {
             RunsInBackground = false;
         }
